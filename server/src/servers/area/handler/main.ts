@@ -1,5 +1,5 @@
 import { Application, Session } from "mydog";
-import { map_instance } from "../../../../app";
+import { map_instance } from "../../../app";
 
 export default class handler {
     app: Application;
