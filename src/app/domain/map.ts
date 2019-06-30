@@ -3,12 +3,40 @@ import { player } from "./player";
 import { item } from "./item";
 import { entity, entity_type } from "./entity";
 import { TowerAOI } from "tower-aoi";
-import { addEvent } from "./aoiEventManager";
+import { addEvent, id_type } from "./aoiEventManager";
 import pathFind from "a-star-pathfind"
 import { getDistance, vector2 } from "./util";
 
 enum tower_range {
     player = 2,
+}
+
+export interface I_newEntities {
+    "players": I_newPlayerJson[],
+    "items": I_newItemJson[]
+}
+
+export interface I_newPlayerJson {
+    "id": number,
+    "type": number,
+    "x": number,
+    "y": number,
+    "username": string,
+    "uid": number,
+    "path": { "x": number, "y": number }[],
+    "speed": number,
+}
+
+export interface I_newItemJson {
+    "id": number,
+    "type": number,
+    "x": number,
+    "y": number,
+}
+
+export interface I_removeEntities {
+    "players": number[],
+    "items": number[],
 }
 
 export class map {
@@ -61,7 +89,7 @@ export class map {
                     let posy = i * this.towerHeight + Math.random() * this.towerHeight;
                     let tmp = new item({ "x": posX, "y": posy });
                     this.entities[tmp.id] = tmp;
-                    this.towerAOI.addObject({ "id": tmp.id, "type": entity_type.item }, { "x": posX, "y": posy });
+                    this.towerAOI.addObj({ "id": tmp.id, "type": entity_type.item }, { "x": posX, "y": posy });
                 }
             }
         }
@@ -90,9 +118,9 @@ export class map {
             "range": tower_range.player
         });
         this.entities[one.id] = one;
-        let ids = this.towerAOI.getIdsByPos({ "x": one.x, "y": one.y }, one.range);
-        let entities = this.getEntitiesJSON(ids).entities;
-        this.towerAOI.addObject({ "id": one.id, "type": one.type }, { "x": one.x, "y": one.y });
+        let ids = this.towerAOI.getObjs({ "x": one.x, "y": one.y }, one.range);
+        let entities = this.getEntitiesJSON(ids);
+        this.towerAOI.addObj({ "id": one.id, "type": one.type }, { "x": one.x, "y": one.y });
         this.towerAOI.addWatcher({ "id": one.id, "type": one.type }, { "x": one.x, "y": one.y }, one.range);
 
         return {
@@ -114,15 +142,15 @@ export class map {
      * @param id 
      * @param next 
      */
-    public move(msg: any, id: number) {
+    public move(msg: { "x": number, "y": number }, id: number) {
         let one = this.entities[id] as player;
         if (!one) {
             return;
         }
         let startX = this.changePos(one.x);
         let startY = this.changePos(one.y);
-        let endX = this.changePos(msg.x1);
-        let endY = this.changePos(msg.y1);
+        let endX = this.changePos(msg.x);
+        let endY = this.changePos(msg.y);
         let path = this.pathFind.findPath(startX, startY, endX, endY);
         if (path === null) {
             return;
@@ -134,17 +162,17 @@ export class map {
             }
         } else if (endTile.x !== endX || endTile.y !== endY) {
             path.pop();
-            msg.x1 = endTile.x * this.tileWidth + this.tileWidth / 2;
-            msg.y1 = endTile.y * this.tileWidth + this.tileWidth / 2;
+            msg.x = endTile.x * this.tileWidth + this.tileWidth / 2;
+            msg.y = endTile.y * this.tileWidth + this.tileWidth / 2;
         } else {
             path.pop();
         }
         this.tileToPos(path);
-        path.push({ "x": msg.x1, "y": msg.y1 });
+        path.push({ "x": msg.x, "y": msg.y });
         one.path = path;
 
         let uids = this.getWatcherUids(one.x, one.y);
-        this.pushMsg("onMove", { "uid": one.uid, "x": one.x, "y": one.y, "path": one.path }, uids);
+        this.app.sendMsgByUid("onMove", { "id": one.id, "x": one.x, "y": one.y, "path": one.path }, uids);
     }
 
     public pickItem(itemId: number, id: number) {
@@ -159,12 +187,10 @@ export class map {
         if (getDistance(one, itemPick) > 1) {
             return;
         }
-        this.towerAOI.removeObject({ "id": itemId, "type": entity_type.item }, itemPick);
+        this.towerAOI.removeObj({ "id": itemId, "type": entity_type.item }, { "x": itemPick.x, "y": itemPick.y });
         delete this.entities[itemId];
         let uids = this.getWatcherUids(one.x, one.y);
-        let entities: { [type: string]: number[] } = {};
-        entities[entity_type.item] = [Number(itemId)];
-        this.onRemoveEntitiesFunc(uids, entities);
+        this.msgRemoveEntities(uids, { "players": [], "items": [itemId] });
     }
 
     private tileToPos(path: { x: number, y: number }[]) {
@@ -178,13 +204,12 @@ export class map {
     }
 
     private getWatcherUids(x: number, y: number) {
-        let ids = this.towerAOI.getWatchersByTypes({ "x": x, "y": y }, [entity_type.player])[entity_type.player];
-        if (!ids) {
-            return [];
-        }
+        let watchers = this.towerAOI.getWatchers({ "x": x, "y": y });
         let res: number[] = [];
-        for (let id in ids) {
-            res.push((this.entities[id] as player).uid);
+        for (let one of watchers) {
+            if (one.type === entity_type.player) {
+                res.push((this.entities[one.id] as player).uid);
+            }
         }
         return res;
     }
@@ -203,30 +228,29 @@ export class map {
             return;
         }
         this.towerAOI.removeWatcher({ "id": id, "type": entity_type.player }, { "x": one.x, "y": one.y }, 3);
-        this.towerAOI.removeObject({ "id": id, "type": one.type }, { "x": one.x, "y": one.y });
+        this.towerAOI.removeObj({ "id": id, "type": one.type }, { "x": one.x, "y": one.y });
         delete this.entities[id];
-        console.log("leave: ", id)
+        // console.log("leave: ", id)
     }
 
     /**
      * 根据id数组获取实体JSON
      * @param ids 
      */
-    public getEntitiesJSON(ids: number[]) {
-        let res: { [type: string]: any[] } = {};
-        let length: number = 0;
-        for (let i = 0; i < ids.length; i++) {
-            let entity = this.entities[ids[i]];
+    public getEntitiesJSON(ids: id_type[]): I_newEntities {
+        let res: I_newEntities = { "players": [], "items": [] };
+        for (let one of ids) {
+            let entity = this.entities[one.id];
             if (!entity) {
                 continue;
             }
-            if (!res[entity.type]) {
-                res[entity.type] = [];
+            if (one.type === entity_type.player) {
+                res.players.push((entity as player).toJSON());
+            } else if (one.type === entity_type.item) {
+                res.items.push((entity as item).toJSON());
             }
-            res[entity.type].push(entity.toJSON());
-            length++;
         }
-        return { "length": length, "entities": res };
+        return res;
     }
 
     /**
@@ -237,15 +261,13 @@ export class map {
         return this.entities[id];
     }
 
-    public pushMsg(cmd: string, msg: any, uids: number[]) {
-        this.app.sendMsgByUid(cmd, msg, uids);
+
+
+    public msgAddEntities(uids: number[], entities: I_newEntities) {
+        this.app.sendMsgByUid("onAddEntities", entities, uids);
     }
 
-    public onAddEntitiesFunc(uids: number[], entities: { [type: string]: any[] }) {
-        this.pushMsg("onAddEntities", entities, uids);
-    }
-
-    public onRemoveEntitiesFunc(uids: number[], entities: { [type: string]: any[] }) {
-        this.pushMsg("onRemoveEntities", entities, uids);
+    public msgRemoveEntities(uids: number[], entities: I_removeEntities) {
+        this.app.sendMsgByUid("onRemoveEntities", entities, uids);
     }
 }

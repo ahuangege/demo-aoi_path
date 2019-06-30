@@ -1,6 +1,6 @@
 import { entity, entity_type } from "./entity";
 import { getDistance, getLerpPos, vector2 } from "./util";
-import { map } from "./map";
+import { map, I_newPlayerJson } from "./map";
 
 export class player extends entity {
     username: string;
@@ -52,11 +52,11 @@ export class player extends entity {
 
             let obj = { "id": this.id, "type": entity_type.player };
             this.map.towerAOI.updateWatcher(obj, oldPos, endPos, this.range, this.range);
-            this.map.towerAOI.updateObject(obj, oldPos, endPos);
+            this.map.towerAOI.updateObj(obj, oldPos, endPos);
         }
     }
 
-    toJSON() {
+    toJSON(): I_newPlayerJson {
         return {
             id: this.id,
             type: this.type,

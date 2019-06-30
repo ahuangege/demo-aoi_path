@@ -1,11 +1,12 @@
 import { entity, entity_type } from "./entity";
+import { I_newItemJson } from "./map";
 
 export class item extends entity {
     constructor(opts: { x: number, y: number }) {
         super({ "type": entity_type.item, "x": opts.x, "y": opts.y })
     }
 
-    toJSON() {
+    toJSON(): I_newItemJson {
         return {
             id: this.id,
             type: this.type,
@@ -14,7 +15,7 @@ export class item extends entity {
         }
     }
 
-    update(){
-        
+    update() {
+
     }
 }

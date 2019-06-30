@@ -13,7 +13,7 @@ export default class handler {
      * @param session 
      * @param next 
      */
-    enter(msg: any, session: Session, next: Function) {
+    enter(msg: { "username": string }, session: Session, next: Function) {
         if (!msg.username) {
             return;
         }
@@ -30,7 +30,7 @@ export default class handler {
      * @param session 
      * @param next 
      */
-    move(msg: any, session: Session, next: Function) {
+    move(msg: { "x": number, "y": number }, session: Session, next: Function) {
         map_instance.move(msg, session.get("id"));
     }
 
@@ -40,7 +40,7 @@ export default class handler {
      * @param session 
      * @param next 
      */
-    pickItem(msg: any, session: Session, next: Function) {
+    pickItem(msg: { "id": number }, session: Session, next: Function) {
         map_instance.pickItem(msg.id, session.get("id"));
     }
 

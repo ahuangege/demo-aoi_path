@@ -1,6 +1,6 @@
 export enum entity_type {
-    player = "player",
-    item = "item",
+    player = 1,
+    item = 2,
 }
 
 let id = 0;
