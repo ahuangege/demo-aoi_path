@@ -6,6 +6,7 @@ import { TowerAOI } from "tower-aoi";
 import { addEvent, id_type } from "./aoiEventManager";
 import pathFind from "a-star-pathfind"
 import { getDistance, vector2 } from "./util";
+import { cmd } from "../../config/cmd";
 
 enum tower_range {
     player = 2,
@@ -172,7 +173,7 @@ export class map {
         one.path = path;
 
         let uids = this.getWatcherUids(one.x, one.y);
-        this.app.sendMsgByUid("onMove", { "id": one.id, "x": one.x, "y": one.y, "path": one.path }, uids);
+        this.app.sendMsgByUid(cmd.onMove, { "id": one.id, "x": one.x, "y": one.y, "path": one.path }, uids);
     }
 
     public pickItem(itemId: number, id: number) {
@@ -264,10 +265,10 @@ export class map {
 
 
     public msgAddEntities(uids: number[], entities: I_newEntities) {
-        this.app.sendMsgByUid("onAddEntities", entities, uids);
+        this.app.sendMsgByUid(cmd.onAddEntities, entities, uids);
     }
 
     public msgRemoveEntities(uids: number[], entities: I_removeEntities) {
-        this.app.sendMsgByUid("onRemoveEntities", entities, uids);
+        this.app.sendMsgByUid(cmd.onRemoveEntities, entities, uids);
     }
 }

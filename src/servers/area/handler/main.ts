@@ -19,8 +19,7 @@ export default class handler {
         }
         let res = map_instance.enter(msg.username);
         session.bind(res.mePlayer.uid);
-        session.set("id", res.mePlayer.id);
-        session.setCloseCb(closed_cb);
+        session.set({ "id": res.mePlayer.id });
         next(res);
     }
 
@@ -47,7 +46,7 @@ export default class handler {
 
 }
 
-function closed_cb(app: Application, session: Session) {
+export function onUserLeave(session: Session) {
     console.log("断开连接: ", session.uid);
     if (!session.uid) {
         return;

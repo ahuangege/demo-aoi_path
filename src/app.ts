@@ -1,9 +1,13 @@
-import { createApp, Application, Session } from "mydog"
-import { map } from "./app/domain/map";
-
+import { createApp } from "mydog"
 let app = createApp();
 
+import { map } from "./app/domain/map";
+import { onUserLeave } from "./servers/area/handler/main";
+
+
 let _map_instance: map = null as any
+
+app.setConfig("connector", { interval: 30, clientOffCb: onUserLeave })
 
 app.configure("area", function () {
     _map_instance = new map(app);
