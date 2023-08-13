@@ -8,35 +8,25 @@ using System.Timers;
 /// <summary>
 /// socket静态类
 /// </summary>
-public static class SocketClient
+public static class Network
 {
-    private static SocketClientChild nowSocket = null;                                                //当前socket
+    private static NetworkChild nowSocket = null;                                                //当前socket
     private static List<string> route = new List<string>();                                           //路由数组
-    private static Dictionary<int, Action<string>> handlers = new Dictionary<int, Action<string>>();  //路由处理函数
+    private static Dictionary<string, Action<byte[]>> handlers = new Dictionary<string, Action<byte[]>>();  //路由处理函数
     private static List<SocketMsg> msgCache = new List<SocketMsg>();                                  //缓存的消息列表
     private static object lockObj = new object();
     private static string md5 = "";     // route消息列表的md5
-
-    enum SocketOpenOrClose
-    {
-        open = -1,
-        close = -2
-    }
+    private static string state_open = "state_open";
+    private static string state_close = "state_close";
 
     /// <summary>
     /// 注册路由
     /// </summary>
     /// <param name="cmd">路由名称</param>
     /// <param name="handler">路由函数</param>
-    public static void AddHandler(string cmd, Action<string> handler)
+    public static void AddHandler(string cmd, Action<byte[]> handler)
     {
-        int index = route.IndexOf(cmd);
-        if (index == -1)
-        {
-            Debug.LogWarning("cmd not exists: " + cmd);
-            return;
-        }
-        handlers[index] = handler;
+        handlers[cmd] = handler;
     }
 
     /// <summary>
@@ -45,7 +35,7 @@ public static class SocketClient
     /// <param name="target"></param>
     public static void RemoveThisHandlers(object target)
     {
-        List<int> dels = new List<int>();
+        List<string> dels = new List<string>();
         foreach (var one in handlers)
         {
             if (one.Value.Target == target)
@@ -63,9 +53,9 @@ public static class SocketClient
     /// socket关闭事件的回调
     /// </summary>
     /// <param name="handler">回调函数</param>
-    public static void OnClose(Action<string> handler)
+    public static void OnClose(Action<byte[]> handler)
     {
-        handlers[(int)SocketOpenOrClose.close] = handler;
+        handlers[state_close] = handler;
     }
 
     /// <summary>
@@ -73,16 +63,16 @@ public static class SocketClient
     /// </summary>
     public static void OffClose()
     {
-        handlers.Remove((int)SocketOpenOrClose.close);
+        handlers.Remove(state_close);
     }
 
     /// <summary>
     ///  socket打开事件的回调
     /// </summary>
     /// <param name="handler">回调函数</param>
-    public static void OnOpen(Action<string> handler)
+    public static void OnOpen(Action<byte[]> handler)
     {
-        handlers[(int)SocketOpenOrClose.open] = handler;
+        handlers[state_open] = handler;
     }
 
     /// <summary>
@@ -90,7 +80,7 @@ public static class SocketClient
     /// </summary>
     public static void OffOpen()
     {
-        handlers.Remove((int)SocketOpenOrClose.open);
+        handlers.Remove(state_open);
     }
 
     /// <summary>
@@ -116,7 +106,7 @@ public static class SocketClient
     public static void Connect(string host, int port)
     {
         DisConnect();
-        nowSocket = new SocketClientChild();
+        nowSocket = new NetworkChild();
         nowSocket.Connect(host, port);
     }
 
@@ -171,12 +161,20 @@ public static class SocketClient
     }
 
 
-    private class SocketClientChild
+    private class NetworkChild
     {
         private Socket mySocket = null;         //原生socket
         private bool isDead = false;            //是否已被弃用
         private Timer heartbeatTimer = null;    // 心跳
         private Timer heartbeatTimeoutTimer = null;    // 心跳回应超时
+
+
+        enum ReadType
+        {
+            head,   // 头部
+            some,   // 部分关键信息
+            msg,    // 具体消息
+        }
 
         public void DisConnect()
         {
@@ -246,18 +244,16 @@ public static class SocketClient
                 Proto_Handshake_req msgReq = new Proto_Handshake_req();
                 msgReq.md5 = md5;
                 byte[] byteMsg = Encoding.UTF8.GetBytes(JsonUtility.ToJson(msgReq));
-                byte[] bytes = new byte[5 + byteMsg.Length];
+                byte[] byteEnd = new byte[5 + byteMsg.Length];
                 int msgLen = byteMsg.Length + 1;
-                bytes[0] = (byte)(msgLen >> 24 & 0xff);
-                bytes[1] = (byte)(msgLen >> 16 & 0xff);
-                bytes[2] = (byte)(msgLen >> 8 & 0xff);
-                bytes[3] = (byte)(msgLen & 0xff);
-                bytes[4] = 2 & 0xff;
-                for (int i = 0; i < byteMsg.Length; i++)
-                {
-                    bytes[i + 5] = byteMsg[i];
-                }
-                mySocket.BeginSend(bytes, 0, bytes.Length, SocketFlags.None, null, null);
+                int index = 0;
+                byteEnd[index++] = (byte)(msgLen >> 24 & 0xff);
+                byteEnd[index++] = (byte)(msgLen >> 16 & 0xff);
+                byteEnd[index++] = (byte)(msgLen >> 8 & 0xff);
+                byteEnd[index++] = (byte)(msgLen & 0xff);
+                byteEnd[index++] = 2 & 0xff;
+                byteMsg.CopyTo(byteEnd, index);
+                mySocket.BeginSend(byteEnd, 0, byteEnd.Length, SocketFlags.None, null, null);
             }
             catch (Exception e)
             {
@@ -269,22 +265,28 @@ public static class SocketClient
         private byte[] Encode(int cmd, string data)
         {
             byte[] byteMsg = Encoding.UTF8.GetBytes(data);
+            byte[] byteEnd = new byte[byteMsg.Length + 7];
             int len = byteMsg.Length + 3;
-            List<byte> byteSource = new List<byte>();
-            byteSource.Add((byte)(len >> 24 & 0xff));
-            byteSource.Add((byte)(len >> 16 & 0xff));
-            byteSource.Add((byte)(len >> 8 & 0xff));
-            byteSource.Add((byte)(len & 0xff));
-            byteSource.Add((byte)(1 & 0xff));
-            byteSource.Add((byte)(cmd >> 8 & 0xff));
-            byteSource.Add((byte)(cmd & 0xff));
-            byteSource.AddRange(byteMsg);
-            return byteSource.ToArray();
+            int index = 0;
+            byteEnd[index++] = (byte)(len >> 24 & 0xff);
+            byteEnd[index++] = (byte)(len >> 16 & 0xff);
+            byteEnd[index++] = (byte)(len >> 8 & 0xff);
+            byteEnd[index++] = (byte)(len & 0xff);
+            byteEnd[index++] = 1;
+            byteEnd[index++] = (byte)(cmd >> 8 & 0xff);
+            byteEnd[index++] = (byte)(cmd & 0xff);
+            byteMsg.CopyTo(byteEnd, index);
+            return byteEnd;
         }
 
-        private int msgLen = 0;
-        private List<byte> msgBytes = new List<byte>();
-        private byte[] data = new byte[1024];
+
+        private byte[] data = new byte[2 * 1024];   // socket接收字节流
+        private ReadType readType = ReadType.head;  // 读取消息阶段
+        private int msgType = 0;    // 消息类型
+        private int byteIndex = 0;    // 当前字节流写入到哪个位置了
+        private byte[] headBytes = new byte[5]; // 头部字节流，固定为5个字节
+        private byte[] someBytes = new byte[2]; // 部分关键信息字节流，目前只有自定义消息用到，且固定为2个字节
+        private byte[] msgBytes = new byte[0]; // 具体消息字节流
         private void Recive()
         {
             try
@@ -294,7 +296,18 @@ public static class SocketClient
                 asyncResult =>
                 {
                     int length = mySocket.EndReceive(asyncResult);
-                    ReadData(length);
+                    if (readType == ReadType.head)
+                    {
+                        ReadHead(0, length);
+                    }
+                    else if (readType == ReadType.some)
+                    {
+                        ReadSome(0, length);
+                    }
+                    else if (readType == ReadType.msg)
+                    {
+                        ReadMsg(0, length);
+                    }
                     Recive();
                 }, null);
             }
@@ -305,78 +318,120 @@ public static class SocketClient
             }
         }
 
-        private void ReadData(int length)
+        private void ReadHead(int readLen, int length)
         {
-            int readLen = 0;
-            while (readLen < length)
+            readType = ReadType.head;
+            if (readLen >= length)
             {
-                if (msgLen == 0)    //数据长度未确定
+                return;
+            }
+            if (length - readLen < headBytes.Length - byteIndex) // 数据未全部到达
+            {
+                Array.Copy(data, readLen, headBytes, byteIndex, length - readLen);
+                byteIndex += length - readLen;
+            }
+            else // 数据全到达
+            {
+                Array.Copy(data, readLen, headBytes, byteIndex, headBytes.Length - byteIndex);
+                readLen += headBytes.Length - byteIndex;
+
+                int allLen = (headBytes[0] << 24) | (headBytes[1] << 16) | (headBytes[2] << 8) | headBytes[3];
+                msgType = headBytes[4];
+                if (msgType == 1)   // 自定义消息
                 {
-                    msgBytes.Add(data[readLen]);
-                    if (msgBytes.Count == 4)
-                    {
-                        msgLen = (msgBytes[0] << 24) | (msgBytes[1] << 16) | (msgBytes[2] << 8) | msgBytes[3];
-                        msgBytes.Clear();
-                    }
-                    readLen++;
-                }
-                else if (length - readLen < msgLen) //数据未全部到达
-                {
-                    for (int i = readLen; i < length; i++)
-                    {
-                        msgBytes.Add(data[i]);
-                    }
-                    msgLen -= (length - readLen);
-                    readLen = length;
+                    msgBytes = new byte[allLen - 3];
+                    byteIndex = 0;
+                    ReadSome(readLen, length);
                 }
                 else
                 {
-                    for (int i = readLen; i < readLen + msgLen; i++)
-                    {
-                        msgBytes.Add(data[i]);
-                    }
-                    readLen += msgLen;
-                    msgLen = 0;
-                    List<byte> tmpBytes = msgBytes;
-                    msgBytes = new List<byte>();
-
-                    HandleMsg(tmpBytes);
+                    msgBytes = new byte[allLen - 1];
+                    byteIndex = 0;
+                    ReadMsg(readLen, length);
                 }
             }
-
         }
 
-        private void HandleMsg(List<byte> tmpBytes)
+        private void ReadSome(int readLen, int length)
         {
-
-            try
+            readType = ReadType.some;
+            if (readLen >= length)
             {
+                return;
+            }
+            if (length - readLen < someBytes.Length - byteIndex) // 数据未全部到达
+            {
+                Array.Copy(data, readLen, someBytes, byteIndex, length - readLen);
+                byteIndex += length - readLen;
+            }
+            else // 数据全到达
+            {
+                Array.Copy(data, readLen, someBytes, byteIndex, someBytes.Length - byteIndex);
+                readLen += someBytes.Length - byteIndex;
 
-                if (tmpBytes[0] == 1)   // 自定义消息
+                byteIndex = 0;
+                ReadMsg(readLen, length);
+            }
+        }
+        private void ReadMsg(int readLen, int length)
+        {
+            readType = ReadType.msg;
+            if (msgBytes.Length == 0)    // 具体消息长度就是0
+            {
+                HandleMsg();
+                msgBytes = null;
+
+                byteIndex = 0;
+                ReadHead(readLen, length);
+                return;
+            }
+            if (readLen >= length)
+            {
+                return;
+            }
+            if (length - readLen < msgBytes.Length - byteIndex)  // 数据未全部到达
+            {
+                Array.Copy(data, readLen, msgBytes, byteIndex, length - readLen);
+                byteIndex += length - readLen;
+            }
+            else // 数据全到达
+            {
+                Array.Copy(data, readLen, msgBytes, byteIndex, msgBytes.Length - byteIndex);
+                readLen += msgBytes.Length - byteIndex;
+
+                HandleMsg();
+                msgBytes = null;
+
+                byteIndex = 0;
+                ReadHead(readLen, length);
+            }
+        }
+
+        private void HandleMsg()
+        {
+            if (msgType == 1)   // 自定义消息
+            {
+                int index = (someBytes[0] << 8) | someBytes[1];
+                if (index < route.Count)
                 {
                     SocketMsg msg = new SocketMsg();
-                    msg.msgId = (tmpBytes[1] << 8) | tmpBytes[2];
-                    msg.msg = Encoding.UTF8.GetString(tmpBytes.GetRange(3, tmpBytes.Count - 3).ToArray());
+                    msg.msgId = route[index];
+                    msg.msg = msgBytes;
                     pushMsg(msg);
                 }
-                else if (tmpBytes[0] == 2)   // 握手回调
-                {
-                    string tmpStr = Encoding.UTF8.GetString(tmpBytes.GetRange(1, tmpBytes.Count - 1).ToArray());
-                    Proto_Handshake_rsp handshakeMsg = JsonUtility.FromJson<Proto_Handshake_rsp>(tmpStr);
-                    DealHandshake(handshakeMsg);
-                }
-                else if (tmpBytes[0] == 3)  // 心跳回调
-                {
-                    if (heartbeatTimeoutTimer != null)
-                    {
-                        heartbeatTimeoutTimer.Stop();
-                    }
-                }
             }
-            catch (Exception e1)
+            else if (msgType == 2)   // 握手回调
             {
-                Debug.Log(e1);
-                SocketClose();
+                string tmpStr = Encoding.UTF8.GetString(msgBytes);
+                Proto_Handshake_rsp handshakeMsg = JsonUtility.FromJson<Proto_Handshake_rsp>(tmpStr);
+                DealHandshake(handshakeMsg);
+            }
+            else if (msgType == 3)  // 心跳回调
+            {
+                if (heartbeatTimeoutTimer != null)
+                {
+                    heartbeatTimeoutTimer.Stop();
+                }
             }
         }
 
@@ -405,7 +460,7 @@ public static class SocketClient
             }
 
             SocketMsg openMsg = new SocketMsg();
-            openMsg.msgId = (int)SocketOpenOrClose.open;
+            openMsg.msgId = state_open;
             pushMsg(openMsg);
         }
 
@@ -441,7 +496,7 @@ public static class SocketClient
             if (!isDead)
             {
                 SocketMsg msg = new SocketMsg();
-                msg.msgId = (int)SocketOpenOrClose.close;
+                msg.msgId = state_close;
                 pushMsg(msg);
                 DisConnect();
             }
@@ -460,8 +515,8 @@ public static class SocketClient
     /// </summary>
     private class SocketMsg
     {
-        public int msgId = 0;
-        public string msg = "";
+        public string msgId;
+        public byte[] msg;
     }
 
     /// <summary>

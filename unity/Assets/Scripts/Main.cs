@@ -5,7 +5,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
 using System;
-
+using System.Text;
 
 public class Main : MonoBehaviour
 {
@@ -60,18 +60,18 @@ public class Main : MonoBehaviour
 
     void ConnectServer()
     {
-        SocketClient.Connect(host, port);
-        SocketClient.OnOpen(OnAreaOpen);
-        SocketClient.OnClose(OnAreaClose);
+        Network.Connect(host, port);
+        Network.OnOpen(OnAreaOpen);
+        Network.OnClose(OnAreaClose);
     }
 
-    void OnAreaOpen(string msg)
+    void OnAreaOpen(byte[] bytes)
     {
         Debug.Log("服务器连接成功");
         transform.Find("socketPanel").gameObject.SetActive(false);
         AddOrRemoveHandler(true);
     }
-    void OnAreaClose(string msg)
+    void OnAreaClose(byte[] bytes)
     {
         Debug.Log("服务器连接失败，重载场景");
         StartCoroutine(ReloadScene());
@@ -84,9 +84,9 @@ public class Main : MonoBehaviour
         SceneManager.LoadScene("main");
     }
 
-    void SVR_areaEnterBack(string data)
+    void SVR_areaEnterBack(byte[] bytes)
     {
-        Proto.EnterBack msg = JsonUtility.FromJson<Proto.EnterBack>(data);
+        Proto.EnterBack msg = Main.FromJson<Proto.EnterBack>(bytes);
         Destroy(transform.Find("loginPanel").gameObject);
         mapWidth = msg.width;
         mapHeight = msg.height;
@@ -111,13 +111,13 @@ public class Main : MonoBehaviour
     {
         Proto.Login msg = new Proto.Login();
         msg.username = username;
-        SocketClient.SendMsg("area.main.enter", msg);
+        Network.SendMsg(Cmd.area_main_enter, msg);
     }
 
     // Update is called once per frame
     void Update()
     {
-        SocketClient.ReadMsg();
+        Network.ReadMsg();
 
         if (mePlayer != null && Input.GetMouseButtonDown(1))
         {
@@ -172,12 +172,12 @@ public class Main : MonoBehaviour
         Proto.Vec2 tmp = new Proto.Vec2();
         tmp.x = x1;
         tmp.y = y1;
-        SocketClient.SendMsg("area.main.move", tmp);
+        Network.SendMsg(Cmd.area_main_move, tmp);
     }
 
-    void SVR_onMove(string data)
+    void SVR_onMove(byte[] bytes)
     {
-        Proto.MoveMsg msg = JsonUtility.FromJson<Proto.MoveMsg>(data);
+        Proto.MoveMsg msg = Main.FromJson<Proto.MoveMsg>(bytes);
         Transform one = playerParent.Find(msg.id.ToString());
         if (one == null)
         {
@@ -283,20 +283,20 @@ public class Main : MonoBehaviour
         }
         Proto.PickItem msg = new Proto.PickItem();
         msg.id = int.Parse(wantPickItem.transform.name);
-        SocketClient.SendMsg("area.main.pickItem", msg);
+        Network.SendMsg(Cmd.area_main_pickItem, msg);
         return true;
     }
 
-    void SVR_onAddEntities(string data)
+    void SVR_onAddEntities(byte[] bytes)
     {
-        Proto.Entities msg = JsonUtility.FromJson<Proto.Entities>(data);
+        Proto.Entities msg = Main.FromJson<Proto.Entities>(bytes);
         CreateItems(msg.items);
         CreatePlayers(msg.players);
     }
 
-    void SVR_onRemoveEntities(string data)
+    void SVR_onRemoveEntities(byte[] bytes)
     {
-        Proto.RemoveEntities msg = JsonUtility.FromJson<Proto.RemoveEntities>(data);
+        Proto.RemoveEntities msg = Main.FromJson<Proto.RemoveEntities>(bytes);
         foreach (var one in msg.items)
         {
             Transform trsm = itemParent.Find(one.ToString());
@@ -382,20 +382,23 @@ public class Main : MonoBehaviour
     {
         if (isAdd)
         {
-            SocketClient.AddHandler("area.main.enter", SVR_areaEnterBack);
-            SocketClient.AddHandler("onMove", SVR_onMove);
-            SocketClient.AddHandler("onAddEntities", SVR_onAddEntities);
-            SocketClient.AddHandler("onRemoveEntities", SVR_onRemoveEntities);
+            Network.AddHandler("area.main.enter", SVR_areaEnterBack);
+            Network.AddHandler("onMove", SVR_onMove);
+            Network.AddHandler("onAddEntities", SVR_onAddEntities);
+            Network.AddHandler("onRemoveEntities", SVR_onRemoveEntities);
         }
         else
         {
-            SocketClient.RemoveHandler("area.main.enter");
-            SocketClient.RemoveHandler("onMove");
-            SocketClient.RemoveHandler("onAddEntities");
-            SocketClient.RemoveHandler("onRemoveEntities");
+            Network.RemoveThisHandlers(this);
         }
 
     }
+
+    static T FromJson<T>(byte[] bytes)
+    {
+        return JsonUtility.FromJson<T>(Encoding.UTF8.GetString(bytes));
+    }
+
 
     private void OnDestroy()
     {
