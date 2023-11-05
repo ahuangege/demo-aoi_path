@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "a-star-pathfind": "^1.5.1",
-    "mydog": "^2.3.6",
+    "mydog": "^2.4.0",
     "tower-aoi": "^1.2.0"
   }
 }
